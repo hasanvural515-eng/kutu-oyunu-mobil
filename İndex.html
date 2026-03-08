@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Mobil Kutu Oyunu</title>
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <style>
+        body { margin: 0; overflow: hidden; background: #333; font-family: 'Segoe UI', sans-serif; touch-action: none; }
+        
+        /* Menü Tasarımı */
+        #menu { position: absolute; inset: 0; background: #1a1a1a; display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 100; color: white; }
+        input, select, button { margin: 10px; padding: 15px; font-size: 16px; border-radius: 10px; border: none; width: 80%; max-width: 300px; outline: none; }
+        button { background: #4CAF50; color: white; cursor: pointer; font-weight: bold; }
+        .join-btn { background: #2196F3; }
+
+        /* Oyun Alanı ve Harita */
+        #game-area { position: relative; width: 2000px; height: 2000px; background-color: #444; 
+                     background-image: radial-gradient(#555 1px, transparent 1px); background-size: 50px 50px; display: none; }
+        
+        /* Sol Üstteki ID Paneli */
+        #room-info { position: fixed; top: 10px; left: 10px; background: rgba(0,0,0,0.7); color: #0f0; 
+                     padding: 10px; border-radius: 5px; font-family: monospace; z-index: 50; display: none; border: 1px solid #0f0; }
+
+        .player { position: absolute; width: 50px; height: 50px; border: 3px solid #fff; display: flex; align-items: center; justify-content: center; font-weight: bold; color: white; text-shadow: 1px 1px 2px black; border-radius: 8px; }
+        .name-label { position: absolute; top: -25px; white-space: nowrap; font-size: 14px; }
+
+        /* Mobil Joystick */
+        #joy-base { position: fixed; bottom: 50px; left: 50px; width: 100px; height: 100px; background: rgba(255,255,255,0.2); border-radius: 50%; display: none; touch-action: none; }
+        #joy-stick { position: absolute; top: 25px; left: 25px; width: 50px; height: 50px; background: #fff; border-radius: 50%; opacity: 0.6; }
+    </style>
+</head>
+<body>
+
+<div id="menu">
+    <h1>Kutu Dünyası</h1>
+    <input type="text" id="username" placeholder="Karakter İsmi">
+    <select id="usercolor">
+        <option value="#ff4444">Kırmızı Kutu</option>
+        <option value="#4444ff">Mavi Kutu</option>
+        <option value="#44ff44">Yeşil Kutu</option>
+        <option value="#ffeb3b">Sarı Kutu</option>
+    </select>
+    <button onclick="startAsHost()">Oda Kur (Host)</button>
+    <hr style="width:80%">
+    <input type="text" id="joinID" placeholder="Arkadaşının Oda ID'sini gir">
+    <button class="join-btn" onclick="startAsClient()">Odaya Katıl</button>
+</div>
+
+<div id="room-info">ODA ID: <span id="displayID">Yükleniyor...</span></div>
+
+<div id="game-area">
+    </div>
+
+<div id="joy-base"><div id="joy-stick"></div></div>
+
+<script>
+    let peer, conn;
+    let myData = { id: '', x: 500, y: 500, name: '', color: '' };
+    let otherPlayers = {};
+
+    const gameArea = document.getElementById('game-area');
+
+    function initInterface(role, id) {
+        document.getElementById('menu').style.display = 'none';
+        document.getElementById('game-area').style.display = 'block';
+        document.getElementById('joy-base').style.display = 'block';
+        document.getElementById('room-info').style.display = 'block';
+        document.getElementById('displayID').innerText = id;
+        
+        myData.name = document.getElementById('username').value || "Oyuncu";
+        myData.color = document.getElementById('usercolor').value;
+        createPlayer('me', myData);
+        setupJoystick();
+    }
+
+    // --- Oda Kurma (Host) ---
+    function startAsHost() {
+        peer = new Peer(); 
+        peer.on('open', id => {
+            initInterface('host', id);
+        });
+        peer.on('connection', c => {
+            conn = c;
+            handleData();
+        });
+    }
+
+    // --- Odaya Katılma (Client) ---
+    function startAsClient() {
+        const targetID = document.getElementById('joinID').value;
+        if(!targetID) return alert("Lütfen bir ID girin!");
+        
+        peer = new Peer();
+        peer.on('open', id => {
+            conn = peer.connect(targetID);
+            initInterface('client', targetID);
+            handleData();
+        });
+    }
+
+    function handleData() {
+        conn.on('open', () => {
+            setInterval(() => {
+                conn.send({ x: myData.x, y: myData.y, name: myData.name, color: myData.color });
+            }, 30);
+        });
+
+        conn.on('data', data => {
+            if(!otherPlayers['enemy']) {
+                createPlayer('enemy', data);
+            }
+            updatePosition('enemy', data);
+        });
+    }
+
+    function createPlayer(id, data) {
+        const div = document.createElement('div');
+        div.id = 'player-' + id;
+        div.className = 'player';
+        div.style.backgroundColor = data.color;
+        div.innerHTML = `<div class="name-label">${data.name}</div>`;
+        gameArea.appendChild(div);
+        otherPlayers[id] = div;
+        updatePosition(id, data);
+    }
+
+    function updatePosition(id, data) {
+        const el = otherPlayers[id];
+        if(el) {
+            el.style.left = data.x + 'px';
+            el.style.top = data.y + 'px';
+            if(id === 'enemy') {
+                el.style.backgroundColor = data.color;
+                el.querySelector('.name-label').innerText = data.name;
+            }
+        }
+    }
+
+    // --- Mobil Joystick Kontrolü ---
+    function setupJoystick() {
+        const base = document.getElementById('joy-base');
+        const stick = document.getElementById('joy-stick');
+        let moveX = 0, moveY = 0;
+
+        base.addEventListener('touchmove', e => {
+            const touch = e.touches[0];
+            const rect = base.getBoundingClientRect();
+            const centerX = rect.left + 50;
+            const centerY = rect.top + 50;
+            
+            let dx = touch.clientX - centerX;
+            let dy = touch.clientY - centerY;
+            const dist = Math.sqrt(dx*dx + dy*dy);
+            
+            if(dist > 40) { dx *= 40/dist; dy *= 40/dist; }
+            
+            stick.style.transform = `translate(${dx}px, ${dy}px)`;
+            
+            myData.x += dx / 5;
+            myData.y += dy / 5;
+            updatePosition('me', myData);
+            
+            // Kamera takibi (Basit)
+            window.scrollTo(myData.x - window.innerWidth/2, myData.y - window.innerHeight/2);
+        });
+
+        base.addEventListener('touchend', () => {
+            stick.style.transform = `translate(0,0)`;
+        });
+    }
+</script>
+</body>
+</html>
